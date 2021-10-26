@@ -1,10 +1,28 @@
 #!/bin/bash
 
+# This macro defines the prefix of node names to resolve.
+# E.g. in our cluster for example, we name 19 nodes with name "node1", "node2", etc.
+# Therefore, we use the prefix "node" as well as the node number to connect to these nodes.
+NODENAME_PREFIX=node
+
+SUDO=
+test $(id -u) -ne 0 && SUDO=sudo
+
 if test -t 1 -a -t 2; then
 	OC_YELLOW="\e[1;33m"
 	OC_PURPLE="\e[1;35m"
-	OC_COMMON="\e[0m"
+	OC_NULL="\e[0m"
 fi
+
+function prompt()
+{
+	echo -e "${OC_YELLOW}$@${OC_NULL}"
+}
+
+function warn()
+{
+	echo -e "${OC_PURPLE}$@${OC_NULL}"
+}
 
 function usage()
 {
@@ -46,7 +64,7 @@ function parse_args()
 			-f|--key-file) g_sshkeyfile=$2; shift ;;
 			-a|--auth-key-file) g_authkeyfile=$2; shift ;;
 			-bc|--bash-config)	g_bashconfig=true;;
-			-*) echo -e "${OC_PURPLE}Unknown option: ${opt}" ;;
+			-*) warn "Unknown option: ${opt}" ;;
 			*)	break
 		esac
 		shift
@@ -55,60 +73,60 @@ function parse_args()
 	# Handle positional arguments
 	# Username
 	g_username="$1"
-	if [ ! "$g_username" ]; then 
+	if [ ! "${g_username}" ]; then 
 		usage; exit 1
 	fi
 	shift
 
 	# All nodes
 	all_nodes="$1"
-	if [ ! "$all_nodes" ]; then
+	if [ ! "${all_nodes}" ]; then
 		usage; exit 1
 	fi
-	oldifs="$IFS"
+	oldifs="${IFS}"
 	IFS=","
-	read -a noderanges <<< "$all_nodes"
-	IFS=$oldifs
+	read -a noderanges <<< "${all_nodes}"
+	IFS=${oldifs}
 	for noderange in ${noderanges[@]}; do
 		IFS="-"
-		read -a anchors <<< "$noderange"
+		read -a anchors <<< "${noderange}"
 		len=${#anchors[@]} 
-		if test $len -gt 2; then
-			echo "Fatal: Unrecognized range: $noderange"
+		if test ${len} -gt 2; then
+			echo "Fatal: Unrecognized range: ${noderange}"
 			exit 1
-		elif test $len -eq 1; then
+		elif test ${len} -eq 1; then
 			targetnodes+=(${anchors[0]})
 		else
 			for i in $(seq ${anchors[0]} ${anchors[1]}); do
-				targetnodes+=($i)
+				targetnodes+=(${i})
 			done
 		fi
-		IFS=$oldifs
+		IFS=${oldifs}
 	done
-	IFS=$oldifs
+	IFS=${oldifs}
 	shift
 	nodes_list_str=""
 	for node in ${targetnodes[@]}; do
-		nodes_list_str="$nodes_list_str $node"
+		nodes_list_str="${nodes_list_str} ${node}"
 	done
 
 	if test $# -gt 0; then
-		echo -e "${OC_PURPLE}Warning: Ignored parameters: $*"
+		warn "Warning: Ignored parameters: $*"
 	fi
 
 	# Show configurations
-	echo -e "$OC_YELLOW
+	echo -e "${OC_YELLOW}
 ==================================
-Target Nodes:      $OC_COMMON${nodes_list_str}$OC_YELLOW
-Username:           $OC_COMMON${g_username}$OC_YELLOW
-Sudo priviledge:    $OC_COMMON${g_withroot}$OC_YELLOW
-SSH key file:	    $OC_COMMON${g_sshkeyfile}$OC_YELLOW
-Auth key file:	    $OC_COMMON${g_authkeyfile}$OC_YELLOW
-Copy Bash config:   $OC_COMMON${g_bashconfig}$OC_YELLOW
+Target Nodes:      ${OC_NULL}${nodes_list_str}${OC_YELLOW}
+Username:           ${OC_NULL}${g_username}${OC_YELLOW}
+Sudo priviledge:    ${OC_NULL}${g_withroot}${OC_YELLOW}
+SSH key file:	    ${OC_NULL}${g_sshkeyfile}${OC_YELLOW}
+Auth key file:	    ${OC_NULL}${g_authkeyfile}${OC_YELLOW}
+Copy Bash config:   ${OC_NULL}${g_bashconfig}${OC_YELLOW}
 ==================================
 
 Press [Enter] to continue, or [Ctrl-C] to exit.
-The process automatically starts in 60 seconds.$OC_COMMON
+The process automatically starts in 60 seconds.${OC_NULL}
 "
 	read -t 60
 	#echo "Start"
@@ -137,10 +155,10 @@ function prepare()
 	# Create SSH key
 	g_sshdir=$(mktemp -d .ssh.XXXX)
 	if test -z "${g_sshkeyfile}"; then
-		echo -e "${OC_YELLOW}Generating local SSH key ...$OC_COMMON"
+		prompt "Generating local SSH key ..."
 		ssh-keygen -q -t rsa -N "" -C "internal-shared-key" -f ${g_sshdir}/id_rsa
 	else
-		echo -e "${OC_YELLOW}Using given SSH key file ${g_sshkeyfile} ...$OC_COMMON"
+		prompt "Using given SSH key file ${g_sshkeyfile} ..."
 		cp ${g_sshkeyfile} ${g_sshdir}/id_rsa
 		chmod 0600 ${g_sshdir}/id_rsa
 		if test -f ${g_sshkeyfile}.pub; then
@@ -162,9 +180,9 @@ function prepare()
 		cat ${g_authkeyfile} >> ${g_sshdir}/authorized_keys
 	else
 		if test ! -t 0; then
-			echo -e "${OC_PURPLE}Stdin is not a terminal. You need to add your public key manually${OC_COMMON}"
+			warn "Stdin is not a terminal. You need to add your public key manually"
 		else
-			echo -e "${OC_PURPLE}Enter your public key to be added to authorized_keys: (Ctrl-D to finish)${OC_COMMON}"
+			warn "Enter your public key to be added to authorized_keys: (Ctrl-D to finish)"
 			cat >> ${g_sshdir}/authorized_keys
 		fi
 	fi
@@ -172,7 +190,7 @@ function prepare()
 	# Root access?
 	if [ ${g_withroot} == true ]; then
 		g_rootfile=$(mktemp ${g_username}-sudoer-XXXX)
-		echo -e "${g_username}\tALL = (root) NOPASSWD:ALL" > $g_rootfile
+		echo -e "${g_username}\tALL = (root) NOPASSWD:ALL" > ${g_rootfile}
 	fi
 }
 
@@ -181,39 +199,42 @@ function single_node_create_account()
 	nodeid="$1"
 
 	# Create account
-	echo -e "${OC_YELLOW}Creating user $g_username...$OC_COMMON"
-	ssh n$nodeid sudo adduser $g_username
+	prompt "Creating user ${g_username}..."
+	ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} adduser ${g_username}
 
 	# Copy keys
-	echo -e "${OC_YELLOW}Copying SSH key files...$OC_COMMON"
-	local remotesshdir=$(ssh n$nodeid mktemp -d .ssh.XXXX)
-	scp -r ${g_sshdir} n$nodeid:${remotesshdir} &>/dev/null
-	ssh n$nodeid sudo mv ${remotesshdir}/${g_sshdir} /home/$g_username/.ssh
-	ssh n$nodeid sudo chown -R $g_username:$g_username /home/$g_username/.ssh
-	ssh n$nodeid sudo chmod 0700 /home/$g_username/.ssh
-	ssh n$nodeid rmdir ${remotesshdir}
+	prompt "Copying SSH key files..."
+	local remotesshdir=$(ssh ${NODENAME_PREFIX}${nodeid} mktemp -d .ssh.XXXX)
+	scp -r ${g_sshdir} ${NODENAME_PREFIX}${nodeid}:${remotesshdir} &>/dev/null
+	ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} mv ${remotesshdir}/${g_sshdir} /home/${g_username}/.ssh
+	ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} chown -R ${g_username}:${g_username} /home/${g_username}/.ssh
+	ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} chmod 0700 /home/${g_username}/.ssh
+	ssh ${NODENAME_PREFIX}${nodeid} rmdir ${remotesshdir}
 	
 	# Root access?
 	if [ ${g_withroot} == true ]; then
-		local remoterootfile=$(ssh n$nodeid mktemp ${g_username}-sudoer-XXXX)
-		scp $g_rootfile n$nodeid:${remoterootfile} &>/dev/null
-		ssh n$nodeid sudo chown root:root $remoterootfile
-		ssh n$nodeid sudo chmod 0440 $remoterootfile
-		ssh n$nodeid sudo mv $remoterootfile /etc/sudoers.d/${g_username}
+		prompt "Granting ROOT access via SUDOER file /etc/sudoers.d/${g_username}..."
+		local remoterootfile=$(ssh ${NODENAME_PREFIX}${nodeid} mktemp ${g_username}-sudoer-XXXX)
+		scp ${g_rootfile} ${NODENAME_PREFIX}${nodeid}:${remoterootfile} &>/dev/null
+		ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} chown root:root ${remoterootfile}
+		ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} chmod 0440 ${remoterootfile}
+		ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} mv ${remoterootfile} /etc/sudoers.d/${g_username}
 	fi
 
 	# Copy bash config file?
 	if [ ${g_bashconfig} == true ]; then
-		local remoteconfigfile=$(ssh n$nodeid mktemp .bc.XXXX)
-		scp ~/.bashrc n$nodeid:${remoteconfigfile} &>/dev/null
-		ssh n$nodeid sudo chown ${g_username}:${g_username} $remoteconfigfile
-		ssh n$nodeid sudo chmod 0644 $remoteconfigfile
-		ssh n$nodeid sudo mv $remoteconfigfile /home/${g_username}/.bashrc
+		prompt "Syncing local bash config file..."
+		local remoteconfigfile=$(ssh ${NODENAME_PREFIX}${nodeid} mktemp .bc.XXXX)
+		scp ~/.bashrc ${NODENAME_PREFIX}${nodeid}:${remoteconfigfile} &>/dev/null
+		ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} chown ${g_username}:${g_username} ${remoteconfigfile}
+		ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} chmod 0644 ${remoteconfigfile}
+		ssh ${NODENAME_PREFIX}${nodeid} ${SUDO} mv ${remoteconfigfile} /home/${g_username}/.bashrc
 	fi
 }
 
 function cleanup()
 {
+	prompt "Cleaning up local temporary files..."
 	rm -rf ${g_sshdir}
 	rm -f ${g_rootfile}
 }
@@ -223,9 +244,11 @@ parse_args $@
 
 prepare
 
-for nodeid in $nodes_list_str; do
-	single_node_create_account $nodeid 2>&1 | sed "s/^/[node $nodeid] /" &
+for nodeid in ${targetnodes[@]}; do
+	single_node_create_account ${nodeid} 2>&1 | sed "s/^/[${NODENAME_PREFIX} ${nodeid}] /" &
 done
 wait
 
 cleanup
+
+prompt "Done."
